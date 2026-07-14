@@ -1,0 +1,17 @@
+{
+  "name": "ai-pair-coding-guide",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local AI pair coding guide that helps humans navigate unfamiliar codebases without taking the keyboard.",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "undici": "^7.16.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

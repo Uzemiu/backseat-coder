@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AI Pair Coding Guide</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">AP</div>
+          <div>
+            <h1>AI Pair Guide</h1>
+            <p>Guides humans through codebases without taking the keyboard.</p>
+          </div>
+        </div>
+
+        <label class="field">
+          <span>Repository path</span>
+          <input id="repoPath" placeholder="G:\code\some-repo">
+        </label>
+        <button id="scanBtn" class="primary">Scan Repo</button>
+
+        <nav class="tabs" aria-label="Sections">
+          <button class="tab active" data-view="dashboard">Repo Map</button>
+          <button class="tab" data-view="navigator">Navigator</button>
+          <button class="tab" data-view="diff">Diff Coach</button>
+          <button class="tab" data-view="log">Learning Log</button>
+        </nav>
+
+        <div class="status">
+          <span id="statusDot" class="dot"></span>
+          <span id="statusText">Ready</span>
+        </div>
+        <pre id="errorDetails" class="error-details" hidden></pre>
+      </aside>
+
+      <main class="main">
+        <section id="dashboard" class="view active">
+          <div class="page-head">
+            <div>
+              <p class="eyebrow">Repo Map</p>
+              <h2>Understand the terrain before changing code.</h2>
+            </div>
+            <span id="aiSource" class="badge">local mode</span>
+          </div>
+
+          <div class="grid two">
+            <article class="panel">
+              <h3>Project Summary</h3>
+              <dl class="summary">
+                <div><dt>Type</dt><dd id="projectType">Scan a repo to begin.</dd></div>
+                <div><dt>Key files</dt><dd id="keyFileCount">-</dd></div>
+                <div><dt>Scanned files</dt><dd id="fileCount">-</dd></div>
+              </dl>
+            </article>
+
+            <article class="panel">
+              <h3>Recommended Reading</h3>
+              <ul id="readingOrder" class="list"></ul>
+            </article>
+          </div>
+
+          <div class="grid two">
+            <article class="panel">
+              <h3>Entry Points</h3>
+              <ul id="entryPoints" class="list"></ul>
+            </article>
+            <article class="panel">
+              <h3>Core Modules</h3>
+              <div id="coreModules" class="module-list"></div>
+            </article>
+          </div>
+
+          <article class="panel">
+            <h3>File Tree</h3>
+            <pre id="fileTree" class="tree">No repository scanned yet.</pre>
+          </article>
+
+          <article class="panel">
+            <h3>Project Guide</h3>
+            <p class="muted">This CLAUDE.md-like context is passed into later AI requests.</p>
+            <pre id="projectGuide" class="tree">Scan a repository to generate a project guide.</pre>
+          </article>
+        </section>
+
+        <section id="navigator" class="view">
+          <div class="page-head">
+            <div>
+              <p class="eyebrow">Task Navigator</p>
+              <h2>Turn a task into a route through the code.</h2>
+            </div>
+          </div>
+
+          <article class="panel">
+            <label class="field">
+              <span>Task</span>
+              <textarea id="taskInput" rows="4" placeholder="Example: change login session timeout"></textarea>
+            </label>
+            <button id="navigateBtn" class="primary">Create Route</button>
+          </article>
+
+          <div class="grid two">
+            <article class="panel">
+              <h3>Guide</h3>
+              <p id="taskUnderstanding" class="muted">No task routed yet.</p>
+              <h4>Suggested Steps</h4>
+              <ol id="suggestedSteps" class="list ordered"></ol>
+            </article>
+            <article class="panel">
+              <h3>Files To Inspect</h3>
+              <ul id="filesToRead" class="list"></ul>
+              <h4>Questions Before Coding</h4>
+              <ul id="questionsBeforeCoding" class="list"></ul>
+            </article>
+          </div>
+
+          <article class="panel">
+            <h3>Search Evidence</h3>
+            <div id="searchResults" class="search-results"></div>
+          </article>
+        </section>
+
+        <section id="diff" class="view">
+          <div class="page-head">
+            <div>
+              <p class="eyebrow">Diff Coach</p>
+              <h2>Review the change as a mentor would.</h2>
+            </div>
+            <button id="diffBtn" class="primary">Analyze Git Diff</button>
+          </div>
+
+          <article class="panel">
+            <h3>Scheduled Checks</h3>
+            <div class="watch-controls">
+              <label class="field compact">
+                <span>Interval seconds</span>
+                <input id="watchInterval" type="number" min="10" step="5" value="60">
+              </label>
+              <button id="startWatchBtn" class="primary">Start Watch</button>
+              <button id="stopWatchBtn" class="secondary" disabled>Stop Watch</button>
+            </div>
+            <p id="watchStatus" class="muted">Watcher is stopped.</p>
+            <div id="watchHistory" class="sessions"></div>
+          </article>
+
+          <div class="grid two">
+            <article class="panel">
+              <h3>Summary</h3>
+              <p id="diffSummary" class="muted">No diff analyzed yet.</p>
+              <h4>Changed Files</h4>
+              <ul id="changedFiles" class="list"></ul>
+            </article>
+            <article class="panel">
+              <h3>Mentor Notes</h3>
+              <h4>Risks</h4>
+              <ul id="risks" class="list"></ul>
+              <h4>Missing Tests</h4>
+              <ul id="missingTests" class="list"></ul>
+            </article>
+          </div>
+
+          <article class="panel">
+            <h3>Reflection Questions</h3>
+            <ul id="reflectionQuestions" class="list"></ul>
+          </article>
+
+          <article class="panel">
+            <h3>Raw Diff</h3>
+            <pre id="rawDiff" class="tree">No diff loaded.</pre>
+          </article>
+        </section>
+
+        <section id="log" class="view">
+          <div class="page-head">
+            <div>
+              <p class="eyebrow">Learning Log</p>
+              <h2>Keep track of what the human understood.</h2>
+            </div>
+            <button id="saveLogBtn" class="primary">Save Current Session</button>
+          </div>
+          <div id="sessions" class="sessions"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
