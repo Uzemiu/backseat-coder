@@ -59,32 +59,46 @@ function createApp(deps) {
           fileCount: files?.length || 0
         });
         const searchResults = await repositoryService.searchRepo(repoPath, task, files || []);
-        const ai = await aiService.aiNavigator(task, repoMap || {}, searchResults);
+        const learningMemory = await sessionStore.findRelevantSessions({
+          repoPath,
+          query: task,
+          changedFiles: searchResults.map((item) => item.file),
+          limit: 5
+        });
+        const ai = await aiService.aiNavigator(task, repoMap || {}, searchResults, learningMemory);
         log("info", "api.request.complete", {
           requestId,
           path: url.pathname,
           status: 200,
           durationMs: Date.now() - started,
           aiSource: ai.source,
-          searchResults: searchResults.length
+          searchResults: searchResults.length,
+          learningMemory: learningMemory.length
         });
-        return sendJson(res, 200, { searchResults, guide: ai.data, aiSource: ai.source, aiError: ai.error, requestId });
+        return sendJson(res, 200, { searchResults, guide: ai.data, learningMemory, aiSource: ai.source, aiError: ai.error, requestId });
       }
 
       if (req.method === "POST" && url.pathname === "/api/diff") {
         const { repoPath, repoMap } = await readBody(req);
         log("info", "api.diff.input", { requestId, repoPath });
         const diffInfo = await gitService.getDiff(repoPath);
-        const ai = await aiService.aiDiffCoach(diffInfo, repoMap || {});
+        const learningMemory = await sessionStore.findRelevantSessions({
+          repoPath,
+          query: diffInfo.diff.slice(0, 2000),
+          changedFiles: diffInfo.changedFiles,
+          limit: 5
+        });
+        const ai = await aiService.aiDiffCoach(diffInfo, repoMap || {}, learningMemory);
         log("info", "api.request.complete", {
           requestId,
           path: url.pathname,
           status: 200,
           durationMs: Date.now() - started,
           aiSource: ai.source,
-          changedFiles: diffInfo.changedFiles.length
+          changedFiles: diffInfo.changedFiles.length,
+          learningMemory: learningMemory.length
         });
-        return sendJson(res, 200, { ...diffInfo, coach: ai.data, aiSource: ai.source, aiError: ai.error, requestId });
+        return sendJson(res, 200, { ...diffInfo, coach: ai.data, learningMemory, aiSource: ai.source, aiError: ai.error, requestId });
       }
 
       if (req.method === "POST" && url.pathname === "/api/diff/check") {
@@ -95,9 +109,16 @@ function createApp(deps) {
         const hasDiff = Boolean(diffInfo.diff.trim());
         const changed = hasDiff && diffHash !== previousDiffHash;
         let ai = { source: "local", data: null };
+        let learningMemory = [];
 
         if (changed) {
-          ai = await aiService.aiDiffCoach(diffInfo, repoMap || {});
+          learningMemory = await sessionStore.findRelevantSessions({
+            repoPath,
+            query: diffInfo.diff.slice(0, 2000),
+            changedFiles: diffInfo.changedFiles,
+            limit: 5
+          });
+          ai = await aiService.aiDiffCoach(diffInfo, repoMap || {}, learningMemory);
         }
 
         log("info", "api.request.complete", {
@@ -108,7 +129,8 @@ function createApp(deps) {
           changed,
           hasDiff,
           aiSource: ai.source,
-          changedFiles: diffInfo.changedFiles.length
+          changedFiles: diffInfo.changedFiles.length,
+          learningMemory: learningMemory.length
         });
         return sendJson(res, 200, {
           checkedAt: new Date().toISOString(),
@@ -118,6 +140,7 @@ function createApp(deps) {
           changedFiles: diffInfo.changedFiles,
           diff: changed ? diffInfo.diff : "",
           coach: ai.data,
+          learningMemory,
           aiSource: ai.source,
           aiError: ai.error,
           requestId

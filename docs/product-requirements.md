@@ -245,6 +245,9 @@ Acceptance criteria:
 - user can save the current session
 - sessions are stored locally in `data/sessions.json`
 - sessions can be viewed in the app
+- later Navigator and Diff Coach requests recall relevant sessions from the same repo
+- recalled sessions are included in AI context as project memory
+- recalled sessions are visible in the UI
 
 ## 8. AI Provider Requirements
 

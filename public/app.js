@@ -125,6 +125,7 @@ function renderNavigation(data) {
   renderList("suggestedSteps", guide.suggestedSteps || []);
   renderList("filesToRead", guide.filesToReadFirst || []);
   renderList("questionsBeforeCoding", guide.questionsBeforeCoding || []);
+  renderMemory("navigationMemory", data.learningMemory || []);
 
   const results = $("searchResults");
   results.innerHTML = "";
@@ -145,6 +146,23 @@ function renderDiff(data) {
   renderList("risks", coach.risks || []);
   renderList("missingTests", coach.missingTests || []);
   renderList("reflectionQuestions", coach.developerUnderstandingQuestions || []);
+  renderMemory("diffMemory", data.learningMemory || []);
+}
+
+function renderMemory(id, sessions) {
+  const node = $(id);
+  node.innerHTML = "";
+  for (const session of sessions || []) {
+    const card = document.createElement("div");
+    card.className = "session";
+    card.innerHTML = `
+      <strong>${escapeHtml(session.task || "Untitled session")}</strong>
+      <span class="muted">${escapeHtml(session.createdAt || "")}</span>
+      <p class="muted">${escapeHtml(session.summary || "No summary.")}</p>
+      <p><b>Files:</b> ${escapeHtml((session.changedFiles || []).join(", ") || "none")}</p>
+    `;
+    node.appendChild(card);
+  }
 }
 
 function renderWatchResult(data) {

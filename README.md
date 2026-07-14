@@ -121,6 +121,10 @@ Logs are stored locally in:
 data/sessions.json
 ```
 
+Saved learning logs are also used as project memory. During `Create Route`, `Diff Coach`, and scheduled diff checks, the server recalls up to five relevant sessions from the same repo and passes them into the AI request alongside the Project Guide.
+
+The UI shows the recalled sessions under `Recalled Memories`, so you can see which previous work influenced the current suggestion.
+
 ## Logs And Debugging
 
 The server writes structured JSON logs for every important operation:

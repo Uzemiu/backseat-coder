@@ -138,22 +138,24 @@ function createAiService({ config, log }) {
     );
   }
 
-  function aiNavigator(task, repoMap, searchResults) {
+  function aiNavigator(task, repoMap, searchResults, learningMemory = []) {
     const fallback = localNavigator(task, repoMap, searchResults);
     const projectGuide = repoMap.projectGuide || buildProjectGuide(repoMap, [], {});
+    const memoryContext = formatLearningMemory(learningMemory);
     return callAiJson(
       "You are an AI pair coding guide. You guide, explain, and ask useful context questions. Do not write the full implementation. Return only JSON.",
-      `Project guide, always treat this as persistent repository context:\n${projectGuide.slice(0, 16000)}\n\nThe human's task is: ${task}\n\nRepo map:\n${JSON.stringify(repoMap)}\n\nRelevant search results:\n${JSON.stringify(searchResults).slice(0, 18000)}\n\nReturn JSON with taskUnderstanding, filesToReadFirst, likelyFilesToChange, questionsBeforeCoding, suggestedSteps.`,
+      `Project guide, always treat this as persistent repository context:\n${projectGuide.slice(0, 16000)}\n\nRelevant Learning Logs from previous work:\n${memoryContext}\n\nThe human's task is: ${task}\n\nRepo map:\n${JSON.stringify(repoMap)}\n\nRelevant search results:\n${JSON.stringify(searchResults).slice(0, 18000)}\n\nReturn JSON with taskUnderstanding, filesToReadFirst, likelyFilesToChange, questionsBeforeCoding, suggestedSteps.`,
       fallback
     );
   }
 
-  function aiDiffCoach(diffInfo, repoMap) {
+  function aiDiffCoach(diffInfo, repoMap, learningMemory = []) {
     const fallback = localDiffCoach(diffInfo);
     const projectGuide = repoMap.projectGuide || buildProjectGuide(repoMap, [], {});
+    const memoryContext = formatLearningMemory(learningMemory);
     return callAiJson(
       "Analyze git diff as a helpful onboarding mentor, not an adversarial reviewer. Explain impact and tests. Return only JSON.",
-      `Project guide, always treat this as persistent repository context:\n${projectGuide.slice(0, 16000)}\n\nRepo map:\n${JSON.stringify(repoMap)}\n\nChanged files:\n${JSON.stringify(diffInfo.changedFiles)}\n\nDiff:\n${diffInfo.diff}\n\nReturn JSON with summary, impact, risks, missingTests, followUpFiles, developerUnderstandingQuestions.`,
+      `Project guide, always treat this as persistent repository context:\n${projectGuide.slice(0, 16000)}\n\nRelevant Learning Logs from previous work:\n${memoryContext}\n\nRepo map:\n${JSON.stringify(repoMap)}\n\nChanged files:\n${JSON.stringify(diffInfo.changedFiles)}\n\nDiff:\n${diffInfo.diff}\n\nReturn JSON with summary, impact, risks, missingTests, followUpFiles, developerUnderstandingQuestions.`,
       fallback
     );
   }
@@ -180,6 +182,25 @@ function parseJsonOutput(content, fallback) {
 
 function joinUrl(baseUrl, pathname) {
   return `${String(baseUrl).replace(/\/+$/, "")}/${String(pathname).replace(/^\/+/, "")}`;
+}
+
+function formatLearningMemory(sessions) {
+  if (!sessions?.length) return "No relevant learning logs found.";
+
+  return sessions.slice(0, 5).map((session, index) => {
+    const lines = [
+      `## Memory ${index + 1}: ${session.task || "Untitled session"}`,
+      `- Created: ${session.createdAt || "unknown"}`,
+      `- Summary: ${session.summary || "No summary"}`,
+      `- Changed files: ${(session.changedFiles || []).join(", ") || "none recorded"}`,
+      `- Learned concepts: ${(session.learnedConcepts || []).join(", ") || "none recorded"}`,
+      `- Open questions: ${(session.openQuestions || []).join(" | ") || "none recorded"}`
+    ];
+    if (session.navigation?.filesToReadFirst?.length) {
+      lines.push(`- Previously suggested files: ${session.navigation.filesToReadFirst.join(", ")}`);
+    }
+    return lines.join("\n");
+  }).join("\n\n").slice(0, 10000);
 }
 
 function localNavigator(task, repoMap, searchResults) {
@@ -236,6 +257,7 @@ function localDiffCoach(diffInfo) {
 
 module.exports = {
   createAiService,
+  formatLearningMemory,
   localDiffCoach,
   localNavigator,
   parseJsonOutput
