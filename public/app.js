@@ -188,11 +188,8 @@ function buildCardHtml(kind, payload) {
       return `<li><strong>${escapeHtml(name)}</strong>${path ? " <span class='badge'>" + escapeHtml(path) + "</span>" : ""}${purpose ? "<br>" + escapeHtml(purpose) : ""}</li>`;
     }).join("");
 
-    return `
-      <div class="card-title-row">
-        <h3>项目理解</h3>
-        ${aiSourceBadge(payload.aiSource, payload.aiError)}
-      </div>
+    const brief = map.brief || "";
+    const detailHtml = `
       <p><strong>类型：</strong>${escapeHtml(map.projectType || "未知")}</p>
       <p><strong>关键文件：</strong>${escapeHtml(String(payload.keyFiles?.length || 0))}
          &nbsp;<strong>扫描文件：</strong>${escapeHtml(String(payload.files?.length || 0))}</p>
@@ -202,39 +199,59 @@ function buildCardHtml(kind, payload) {
       ${map.projectGuide ? `<details><summary>项目指南</summary><pre>${escapeHtml(map.projectGuide)}</pre></details>` : ""}
       ${payload.tree ? `<details><summary>文件树</summary><pre>${escapeHtml(payload.tree)}</pre></details>` : ""}
     `;
+
+    return `
+      <div class="card-title-row">
+        <h3>项目理解</h3>
+        ${aiSourceBadge(payload.aiSource, payload.aiError)}
+      </div>
+      ${brief ? `<p class="card-brief">${escapeHtml(brief)}</p>` : ""}
+      <details class="card-details"><summary>详情</summary>${detailHtml}</details>
+    `;
   }
 
   if (kind === "diff") {
     const coach = payload.coach || {};
     const ts = payload.checkedAt ? new Date(payload.checkedAt).toLocaleTimeString() : "";
-    return `
-      <div class="card-title-row">
-        <h3>改动审视${ts ? " · " + escapeHtml(ts) : ""}</h3>
-        ${aiSourceBadge(payload.aiSource, payload.aiError)}
-      </div>
+    const brief = coach.brief || "";
+    const detailHtml = `
       ${coach.summary ? `<p>${escapeHtml(coach.summary)}</p>` : ""}
       ${payload.changedFiles?.length ? `<h4>改动文件</h4>${listHtml(payload.changedFiles)}` : ""}
+      ${coach.impact?.length ? `<h4>影响</h4>${listHtml(coach.impact)}` : ""}
       ${coach.risks?.length ? `<h4>风险</h4>${listHtml(coach.risks)}` : ""}
       ${coach.missingTests?.length ? `<h4>缺失测试</h4>${listHtml(coach.missingTests)}` : ""}
       ${coach.developerUnderstandingQuestions?.length ? `<h4>反思问题</h4>${listHtml(coach.developerUnderstandingQuestions, "ol")}` : ""}
       ${memoryHtml(payload.learningMemory)}
       ${payload.diff ? `<details><summary>raw diff</summary><pre>${escapeHtml(payload.diff)}</pre></details>` : ""}
     `;
+    return `
+      <div class="card-title-row">
+        <h3>改动审视${ts ? " · " + escapeHtml(ts) : ""}</h3>
+        ${aiSourceBadge(payload.aiSource, payload.aiError)}
+      </div>
+      ${brief ? `<p class="card-brief">${escapeHtml(brief)}</p>` : ""}
+      <details class="card-details"><summary>详情</summary>${detailHtml}</details>
+    `;
   }
 
   if (kind === "navigate") {
     const guide = payload.guide || {};
-    return `
-      <div class="card-title-row">
-        <h3>任务导航</h3>
-        ${aiSourceBadge(payload.aiSource, payload.aiError)}
-      </div>
+    const brief = guide.brief || "";
+    const detailHtml = `
       ${guide.taskUnderstanding ? `<p>${escapeHtml(guide.taskUnderstanding)}</p>` : ""}
       ${guide.filesToReadFirst?.length ? `<h4>优先阅读</h4>${listHtml(guide.filesToReadFirst)}` : ""}
       ${guide.likelyFilesToChange?.length ? `<h4>可能修改</h4>${listHtml(guide.likelyFilesToChange)}` : ""}
       ${guide.questionsBeforeCoding?.length ? `<h4>动手前的问题</h4>${listHtml(guide.questionsBeforeCoding)}` : ""}
       ${guide.suggestedSteps?.length ? `<h4>建议步骤</h4>${listHtml(guide.suggestedSteps, "ol")}` : ""}
       ${memoryHtml(payload.learningMemory)}
+    `;
+    return `
+      <div class="card-title-row">
+        <h3>任务导航</h3>
+        ${aiSourceBadge(payload.aiSource, payload.aiError)}
+      </div>
+      ${brief ? `<p class="card-brief">${escapeHtml(brief)}</p>` : ""}
+      <details class="card-details"><summary>详情</summary>${detailHtml}</details>
     `;
   }
 
@@ -301,6 +318,49 @@ $("scanBtn").addEventListener("click", async () => {
     syncContext();
     $("taskBar").hidden = false;
     setStatus("就绪");
+  } catch (error) {
+    setError(error);
+  }
+});
+
+// 注意：VS Code Webview 中原生 confirm()/alert() 被禁用会直接返回 false，
+// 因此用「二次点击确认」代替，避免按钮看似无反应。
+let clearMemoryArmed = false;
+let clearMemoryTimer = null;
+
+$("clearMemoryBtn").addEventListener("click", async () => {
+  const btn = $("clearMemoryBtn");
+
+  if (!clearMemoryArmed) {
+    clearMemoryArmed = true;
+    const originalText = btn.textContent;
+    btn.textContent = "再次点击确认清除";
+    setStatus("再次点击「清除记忆」以确认（3 秒内）", "busy");
+    clearMemoryTimer = setTimeout(() => {
+      clearMemoryArmed = false;
+      btn.textContent = originalText;
+      setStatus("就绪");
+    }, 3000);
+    return;
+  }
+
+  clearTimeout(clearMemoryTimer);
+  clearMemoryArmed = false;
+  btn.textContent = "清除记忆";
+
+  try {
+    setStatus("正在清除记忆…", "busy");
+    await api("/api/clearSessions", {});
+    // 清空卡片流（含 Diff Coach 卡片）和持久化状态
+    $("cardFeed").innerHTML = "";
+    state.scan = null;
+    state.repoMap = null;
+    state.task = "";
+    $("taskBar").hidden = true;
+    $("taskInput").value = "";
+    if (vscode) vscode.setState(null);
+    setStatus("记忆已清除");
+    appendCard("wake", { message: "记忆已清除，卡片历史已重置。" });
   } catch (error) {
     setError(error);
   }

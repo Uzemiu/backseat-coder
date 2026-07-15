@@ -31,6 +31,10 @@ function createGitService({ log }) {
     const root = path.resolve(repoPath);
     const started = Date.now();
     log("info", "diff.start", { repoPath: root });
+    // Register untracked files as intent-to-add so `git diff` reports them as new
+    // files. `-N` records only their existence in the index (not their content),
+    // so it does not actually stage the changes.
+    await runGit(["add", "-N", "--", "."], root);
     const diff = await runGit(["diff", "--", "."], root);
     const names = await runGit(["diff", "--name-only", "--", "."], root);
     if (!diff.ok && !names.ok) {

@@ -71,6 +71,26 @@ button, input, textarea, select {
   flex-shrink: 0;
 }
 
+.task-bar-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: space-between;
+}
+
+.btn-danger {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px 8px;
+  background: transparent;
+  color: #f44747;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.btn-danger:hover {
+  background: rgba(244, 71, 71, 0.1);
+}
+
 .task-bar textarea {
   resize: none;
   border: 1px solid var(--input-border);
@@ -200,6 +220,32 @@ button, input, textarea, select {
   color: var(--muted);
   font-size: 11px;
   user-select: none;
+}
+
+.card-brief {
+  margin: 4px 0 8px;
+  line-height: 1.5;
+}
+
+.card-details > summary {
+  display: inline-block;
+  padding: 2px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+  user-select: none;
+  margin-top: 2px;
+}
+
+.card-details > summary:hover {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+.card-details[open] > summary {
+  margin-bottom: 6px;
 }
 
 .card .badge {

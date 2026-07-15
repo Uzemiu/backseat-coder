@@ -41,7 +41,11 @@ function createSidebarProvider(context, deps) {
       // API call: has numeric id
       const { id, command, payload } = msg;
       try {
-        const result = await deps.handlers[command](payload);
+        const handler = deps.handlers[command];
+        if (typeof handler !== "function") {
+          throw new Error(`未知命令 "${command}"。扩展可能加载的是旧代码，请执行 Developer: Reload Window 后重试。`);
+        }
+        const result = await handler(payload);
         webviewView.webview.postMessage({ id, result });
       } catch (error) {
         webviewView.webview.postMessage({

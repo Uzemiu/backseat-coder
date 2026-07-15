@@ -42,7 +42,12 @@ function createSessionStore({ dataDir, sessionsFile }) {
       .map((item) => compactSession(item.session));
   }
 
-  return { findRelevantSessions, loadSessions, saveSession };
+  async function clearSessions() {
+    await fsp.mkdir(dataDir, { recursive: true });
+    await fsp.writeFile(sessionsFile, JSON.stringify([], null, 2));
+  }
+
+  return { clearSessions, findRelevantSessions, loadSessions, saveSession };
 }
 
 function compactSession(session) {

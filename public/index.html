@@ -16,7 +16,10 @@
 
     <section id="taskBar" class="task-bar" hidden>
       <textarea id="taskInput" rows="2" placeholder="当前任务，例如：修改登录超时时间…"></textarea>
-      <button id="navigateBtn" class="btn-secondary">导航</button>
+      <div class="task-bar-actions">
+        <button id="navigateBtn" class="btn-secondary">导航</button>
+        <button id="clearMemoryBtn" class="btn-danger" title="清除该仓库的所有学习记录">清除记忆</button>
+      </div>
     </section>
 
     <main id="cardFeed" class="card-feed" aria-live="polite" aria-label="反馈流"></main>

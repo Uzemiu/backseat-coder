@@ -82,6 +82,11 @@ function createHandlers(deps) {
 
     async getSessions() {
       return sessionStore.loadSessions();
+    },
+
+    async clearSessions() {
+      await sessionStore.clearSessions();
+      return { cleared: true };
     }
   };
 }
@@ -97,6 +102,7 @@ function createApp(deps) {
     "POST /api/diff": (body) => handlers.diff(body),
     "POST /api/diff/check": (body) => handlers.diffCheck(body),
     "POST /api/sessions": (body) => handlers.saveSession(body),
+    "POST /api/clearSessions": () => handlers.clearSessions(),
     "GET /api/sessions": () => handlers.getSessions()
   };
 
