@@ -1,11 +1,16 @@
 const fsp = require("node:fs/promises");
 const path = require("node:path");
 const { pathExists } = require("../core/http");
+const { tokenize } = require("../core/text");
 
 function createSessionStore({ dataDir, sessionsFile }) {
   async function loadSessions() {
     if (!(await pathExists(sessionsFile))) return [];
-    return JSON.parse(await fsp.readFile(sessionsFile, "utf8"));
+    try {
+      return JSON.parse(await fsp.readFile(sessionsFile, "utf8"));
+    } catch {
+      return [];
+    }
   }
 
   async function saveSession(session) {
@@ -83,11 +88,6 @@ function scoreSession(session, { root, terms, changedFiles }) {
 
   if (!terms.length && !changedFiles?.length && root && sessionRepo === root) score += 1;
   return score;
-}
-
-function tokenize(text) {
-  return [...new Set(String(text).toLowerCase().match(/[a-z0-9_\-\u4e00-\u9fff]+/g) || [])]
-    .filter((word) => word.length > 1 && !["the", "and", "for", "with", "this", "that"].includes(word));
 }
 
 function normalizePath(value) {

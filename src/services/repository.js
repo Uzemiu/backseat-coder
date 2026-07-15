@@ -1,5 +1,6 @@
 const fsp = require("node:fs/promises");
 const path = require("node:path");
+const { tokenize } = require("../core/text");
 
 const IGNORE_DIRS = new Set([
   ".git",
@@ -343,11 +344,6 @@ function inferModules(files) {
       path: name,
       purpose: `Contains ${count} scanned file${count === 1 ? "" : "s"}; inspect to confirm responsibility.`
     }));
-}
-
-function tokenize(text) {
-  return [...new Set(String(text).toLowerCase().match(/[a-z0-9_\-\u4e00-\u9fff]+/g) || [])]
-    .filter((word) => word.length > 1 && !["the", "and", "for", "with", "this", "that"].includes(word));
 }
 
 module.exports = {

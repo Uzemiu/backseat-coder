@@ -2,89 +2,130 @@ const state = {
   repoPath: "",
   scan: null,
   repoMap: null,
-  task: "",
-  navigation: null,
-  diff: null,
-  watchTimer: null,
-  watchRunning: false,
-  lastDiffHash: ""
+  task: ""
 };
 
 const $ = (id) => document.getElementById(id);
 
-function formatAiSource(source) {
-  if (source === "anthropic") return "Anthropic mode";
-  if (source === "openai") return "OpenAI mode";
-  return "local mode";
+// VS Code Webview API (undefined when running in a normal browser)
+const vscode = typeof acquireVsCodeApi !== "undefined" ? acquireVsCodeApi() : null;
+
+// Pending promise callbacks keyed by request id
+const pending = new Map();
+let nextId = 1;
+
+// Message router: handles both API responses and push events from the extension
+window.addEventListener("message", (event) => {
+  const msg = event.data;
+
+  // API response: has numeric id
+  if (typeof msg.id === "number") {
+    const callbacks = pending.get(msg.id);
+    if (!callbacks) return;
+    pending.delete(msg.id);
+    if (msg.error) callbacks.reject(Object.assign(new Error(msg.error.message), msg.error));
+    else callbacks.resolve(msg.result);
+    return;
+  }
+
+  // Push events from extension
+  if (msg.type === "init") {
+    if (!state.repoPath && msg.workspacePath) {
+      $("repoPath").value = msg.workspacePath;
+      state.repoPath = msg.workspacePath;
+    }
+    return;
+  }
+  if (msg.type === "card") {
+    appendCard(msg.kind, msg.payload);
+    return;
+  }
+  if (msg.type === "afk") {
+    appendCard("afk", null);
+    return;
+  }
+  if (msg.type === "wake") {
+    appendCard("wake", null);
+    return;
+  }
+});
+
+function api(path, body) {
+  if (vscode) {
+    const segments = path.replace(/^\/api\//, "").split("/");
+    const base = segments.length === 1
+      ? segments[0]
+      : segments[0] + segments.slice(1).map((s) => s[0].toUpperCase() + s.slice(1)).join("");
+    const command = body === undefined ? "get" + base[0].toUpperCase() + base.slice(1) : base;
+
+    return new Promise((resolve, reject) => {
+      const id = nextId++;
+      pending.set(id, { resolve, reject });
+      vscode.postMessage({ id, command, payload: body || {} });
+    });
+  }
+
+  // Browser / standalone server mode
+  const isGet = body === undefined;
+  return fetch(path, {
+    method: isGet ? "GET" : "POST",
+    headers: isGet ? {} : { "content-type": "application/json" },
+    body: isGet ? undefined : JSON.stringify(body)
+  }).then(async (response) => {
+    let json;
+    try { json = await response.json(); } catch {
+      const err = new Error(`Server returned non-JSON response with HTTP ${response.status}`);
+      err.hint = "Check data/server.err.log and data/app.log.";
+      throw err;
+    }
+    if (!response.ok) {
+      const err = new Error(json.error || `Request failed with HTTP ${response.status}`);
+      err.requestId = json.requestId;
+      err.hint = json.hint;
+      throw err;
+    }
+    return json;
+  }).catch((error) => {
+    if (error.message?.startsWith("Server returned") || error.requestId) throw error;
+    const wrapped = new Error(`Network request failed: ${error.message || error}`);
+    wrapped.hint = "Check that the server is running at http://localhost:3000 and inspect data/app.log.";
+    throw wrapped;
+  });
 }
 
-function formatGenerationStatus(action, source, error) {
-  if (source !== "local") return `${action} with ${formatAiSource(source)}`;
-  if (error) return `${action} locally after provider error`;
-  return `${action} locally`;
+// Tell extension the current context so it can run diffCheck on save
+function syncContext() {
+  if (vscode) {
+    vscode.postMessage({
+      command: "setContext",
+      payload: {
+        repoPath: state.repoPath,
+        repoMap: state.repoMap,
+        task: state.task
+      }
+    });
+  }
 }
 
 function setStatus(text, mode = "ready") {
   $("statusText").textContent = text;
-  $("statusDot").className = `dot ${mode === "ready" ? "" : mode}`;
-  if (mode !== "error") {
-    $("errorDetails").hidden = true;
-    $("errorDetails").textContent = "";
-  }
+  $("statusDot").className = `dot${mode === "ready" ? "" : " " + mode}`;
 }
 
 function setError(error) {
   const message = error.message || String(error);
   setStatus(message, "error");
-  $("errorDetails").hidden = false;
-  $("errorDetails").textContent = [
-    message,
-    error.requestId ? `requestId: ${error.requestId}` : "",
-    error.hint || ""
-  ].filter(Boolean).join("\n");
   console.error(error);
+  appendCard("error", { message, hint: error.hint, requestId: error.requestId });
 }
 
-async function api(path, body) {
-  let response;
-  try {
-    response = await fetch(path, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body)
-    });
-  } catch (error) {
-    const wrapped = new Error(`Network request failed: ${error.message || error}`);
-    wrapped.hint = "Check that the server is running at http://localhost:3000 and inspect data/app.log.";
-    throw wrapped;
-  }
-
-  let json;
-  try {
-    json = await response.json();
-  } catch (error) {
-    const wrapped = new Error(`Server returned non-JSON response with HTTP ${response.status}`);
-    wrapped.hint = "Check data/server.err.log and data/app.log.";
-    throw wrapped;
-  }
-
-  if (!response.ok) {
-    const wrapped = new Error(json.error || `Request failed with HTTP ${response.status}`);
-    wrapped.requestId = json.requestId;
-    wrapped.hint = json.hint;
-    throw wrapped;
-  }
-  return json;
-}
-
-function renderList(id, items) {
-  const node = $(id);
-  node.innerHTML = "";
-  for (const item of normalizeList(items)) {
-    const li = document.createElement("li");
-    li.textContent = typeof item === "string" ? item : JSON.stringify(item);
-    node.appendChild(li);
-  }
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 function normalizeList(items) {
@@ -93,159 +134,173 @@ function normalizeList(items) {
   return [items];
 }
 
-function renderRepoMap(scan) {
-  const map = scan.repoMap || scan.localMap || {};
-  state.repoMap = map;
-  $("aiSource").textContent = formatAiSource(scan.aiSource);
-  $("projectType").textContent = map.projectType || "Unknown";
-  $("keyFileCount").textContent = String(scan.keyFiles?.length || 0);
-  $("fileCount").textContent = String(scan.files?.length || 0);
-  $("fileTree").textContent = scan.tree || "No files found.";
-  $("projectGuide").textContent = map.projectGuide || "No project guide generated.";
-  renderList("readingOrder", map.recommendedReadingOrder || []);
-  renderList("entryPoints", map.mainEntryPoints || []);
+function listHtml(items, tag = "ul") {
+  const rows = normalizeList(items);
+  if (!rows.length) return "";
+  const lis = rows.map((item) => `<li>${escapeHtml(typeof item === "string" ? item : JSON.stringify(item))}</li>`).join("");
+  return `<${tag}>${lis}</${tag}>`;
+}
 
-  const modules = $("coreModules");
-  modules.innerHTML = "";
-  for (const mod of map.coreModules || []) {
-    const normalized = typeof mod === "string"
-      ? { name: mod.split("/").pop(), path: mod, purpose: "AI identified this as a core module; inspect to confirm responsibility." }
-      : mod;
-    const card = document.createElement("div");
-    card.className = "module";
-    card.innerHTML = `<strong>${escapeHtml(normalized.name || normalized.path || "module")}</strong><span class="muted">${escapeHtml(normalized.path || "")}</span><p class="muted">${escapeHtml(normalized.purpose || "")}</p>`;
-    modules.appendChild(card);
+function aiSourceBadge(source, error) {
+  if (!source) return "";
+  let label = source === "anthropic" ? "Anthropic" : source === "openai" ? "OpenAI" : "local";
+  if (error) label += " (fallback)";
+  return `<span class="badge">${escapeHtml(label)}</span>`;
+}
+
+function memoryHtml(sessions) {
+  if (!sessions || !sessions.length) return "";
+  const items = sessions.map((s) => `
+    <li>
+      <strong>${escapeHtml(s.task || "Untitled")}</strong>
+      <span class="badge">${escapeHtml(s.createdAt || "")}</span>
+      <p>${escapeHtml(s.summary || "")}</p>
+    </li>`).join("");
+  return `<h4>召回记忆</h4><ul>${items}</ul>`;
+}
+
+function buildCardHtml(kind, payload) {
+  if (kind === "afk") {
+    return `<div class="afk-banner">💤 已静默 · 检测到你离开了</div>`;
   }
-}
 
-function renderNavigation(data) {
-  const guide = data.guide || {};
-  state.navigation = data;
-  $("taskUnderstanding").textContent = guide.taskUnderstanding || "No task understanding returned.";
-  renderList("suggestedSteps", guide.suggestedSteps || []);
-  renderList("filesToRead", guide.filesToReadFirst || []);
-  renderList("questionsBeforeCoding", guide.questionsBeforeCoding || []);
-  renderMemory("navigationMemory", data.learningMemory || []);
-
-  const results = $("searchResults");
-  results.innerHTML = "";
-  for (const result of data.searchResults || []) {
-    const card = document.createElement("div");
-    card.className = "result";
-    card.innerHTML = `<strong>${escapeHtml(result.file)}</strong><span class="muted">score ${result.score}</span><pre>${escapeHtml(result.snippet || "Matched by file name.")}</pre>`;
-    results.appendChild(card);
+  if (kind === "wake") {
+    const context = state.repoPath ? `你上次在改 <em>${escapeHtml(state.repoPath)}</em>` : "";
+    return `<div class="wake-banner">👋 欢迎回来${context ? " · " + context : ""}</div>`;
   }
-}
 
-function renderDiff(data) {
-  const coach = data.coach || {};
-  state.diff = data;
-  $("diffSummary").textContent = coach.summary || "No summary returned.";
-  $("rawDiff").textContent = data.diff || "No unstaged diff found.";
-  renderList("changedFiles", data.changedFiles || []);
-  renderList("risks", coach.risks || []);
-  renderList("missingTests", coach.missingTests || []);
-  renderList("reflectionQuestions", coach.developerUnderstandingQuestions || []);
-  renderMemory("diffMemory", data.learningMemory || []);
-}
-
-function renderMemory(id, sessions) {
-  const node = $(id);
-  node.innerHTML = "";
-  for (const session of sessions || []) {
-    const card = document.createElement("div");
-    card.className = "session";
-    card.innerHTML = `
-      <strong>${escapeHtml(session.task || "Untitled session")}</strong>
-      <span class="muted">${escapeHtml(session.createdAt || "")}</span>
-      <p class="muted">${escapeHtml(session.summary || "No summary.")}</p>
-      <p><b>Files:</b> ${escapeHtml((session.changedFiles || []).join(", ") || "none")}</p>
+  if (kind === "error") {
+    const p = payload || {};
+    return `
+      <h3>错误</h3>
+      <p>${escapeHtml(p.message || "未知错误")}</p>
+      ${p.hint ? `<p>${escapeHtml(p.hint)}</p>` : ""}
+      ${p.requestId ? `<p>requestId: ${escapeHtml(p.requestId)}</p>` : ""}
     `;
-    node.appendChild(card);
-  }
-}
-
-function renderWatchResult(data) {
-  state.lastDiffHash = data.diffHash || state.lastDiffHash;
-  const checkedAt = new Date(data.checkedAt || Date.now()).toLocaleTimeString();
-
-  if (!data.hasDiff) {
-    $("watchStatus").textContent = `Last checked at ${checkedAt}: no unstaged diff.`;
-    return;
   }
 
-  if (!data.changed) {
-    $("watchStatus").textContent = `Last checked at ${checkedAt}: diff unchanged.`;
-    return;
-  }
+  if (kind === "scan") {
+    const map = payload.repoMap || payload.localMap || {};
+    const modules = normalizeList(map.coreModules || []).map((mod) => {
+      const name = typeof mod === "string" ? mod : (mod.name || mod.path || "module");
+      const path = typeof mod === "string" ? "" : (mod.path || "");
+      const purpose = typeof mod === "string" ? "" : (mod.purpose || "");
+      return `<li><strong>${escapeHtml(name)}</strong>${path ? " <span class='badge'>" + escapeHtml(path) + "</span>" : ""}${purpose ? "<br>" + escapeHtml(purpose) : ""}</li>`;
+    }).join("");
 
-  $("watchStatus").textContent = `Last checked at ${checkedAt}: new changes found in ${data.changedFiles.length} file(s).`;
-  renderDiff(data);
-
-  const item = document.createElement("div");
-  item.className = "session";
-  item.innerHTML = `
-    <strong>${escapeHtml(checkedAt)} - ${escapeHtml(data.changedFiles.join(", ") || "Changed files")}</strong>
-    <p class="muted">${escapeHtml(data.coach?.summary || "Changes detected.")}</p>
-  `;
-  $("watchHistory").prepend(item);
-
-  while ($("watchHistory").children.length > 6) {
-    $("watchHistory").lastElementChild.remove();
-  }
-}
-
-async function loadSessions() {
-  const response = await fetch("/api/sessions");
-  const sessions = await response.json();
-  const node = $("sessions");
-  node.innerHTML = "";
-  for (const session of sessions) {
-    const card = document.createElement("div");
-    card.className = "session";
-    card.innerHTML = `
-      <strong>${escapeHtml(session.task || "Untitled session")}</strong>
-      <span class="muted">${escapeHtml(session.createdAt || "")}</span>
-      <p class="muted">${escapeHtml(session.summary || "No summary.")}</p>
-      <p><b>Repo:</b> ${escapeHtml(session.repoPath || "")}</p>
+    return `
+      <div class="card-title-row">
+        <h3>项目理解</h3>
+        ${aiSourceBadge(payload.aiSource, payload.aiError)}
+      </div>
+      <p><strong>类型：</strong>${escapeHtml(map.projectType || "未知")}</p>
+      <p><strong>关键文件：</strong>${escapeHtml(String(payload.keyFiles?.length || 0))}
+         &nbsp;<strong>扫描文件：</strong>${escapeHtml(String(payload.files?.length || 0))}</p>
+      ${map.mainEntryPoints?.length ? `<h4>入口</h4>${listHtml(map.mainEntryPoints)}` : ""}
+      ${map.recommendedReadingOrder?.length ? `<h4>推荐阅读顺序</h4>${listHtml(map.recommendedReadingOrder)}` : ""}
+      ${modules ? `<h4>核心模块</h4><ul>${modules}</ul>` : ""}
+      ${map.projectGuide ? `<details><summary>项目指南</summary><pre>${escapeHtml(map.projectGuide)}</pre></details>` : ""}
+      ${payload.tree ? `<details><summary>文件树</summary><pre>${escapeHtml(payload.tree)}</pre></details>` : ""}
     `;
-    node.appendChild(card);
   }
+
+  if (kind === "diff") {
+    const coach = payload.coach || {};
+    const ts = payload.checkedAt ? new Date(payload.checkedAt).toLocaleTimeString() : "";
+    return `
+      <div class="card-title-row">
+        <h3>改动审视${ts ? " · " + escapeHtml(ts) : ""}</h3>
+        ${aiSourceBadge(payload.aiSource, payload.aiError)}
+      </div>
+      ${coach.summary ? `<p>${escapeHtml(coach.summary)}</p>` : ""}
+      ${payload.changedFiles?.length ? `<h4>改动文件</h4>${listHtml(payload.changedFiles)}` : ""}
+      ${coach.risks?.length ? `<h4>风险</h4>${listHtml(coach.risks)}` : ""}
+      ${coach.missingTests?.length ? `<h4>缺失测试</h4>${listHtml(coach.missingTests)}` : ""}
+      ${coach.developerUnderstandingQuestions?.length ? `<h4>反思问题</h4>${listHtml(coach.developerUnderstandingQuestions, "ol")}` : ""}
+      ${memoryHtml(payload.learningMemory)}
+      ${payload.diff ? `<details><summary>raw diff</summary><pre>${escapeHtml(payload.diff)}</pre></details>` : ""}
+    `;
+  }
+
+  if (kind === "navigate") {
+    const guide = payload.guide || {};
+    return `
+      <div class="card-title-row">
+        <h3>任务导航</h3>
+        ${aiSourceBadge(payload.aiSource, payload.aiError)}
+      </div>
+      ${guide.taskUnderstanding ? `<p>${escapeHtml(guide.taskUnderstanding)}</p>` : ""}
+      ${guide.filesToReadFirst?.length ? `<h4>优先阅读</h4>${listHtml(guide.filesToReadFirst)}` : ""}
+      ${guide.likelyFilesToChange?.length ? `<h4>可能修改</h4>${listHtml(guide.likelyFilesToChange)}` : ""}
+      ${guide.questionsBeforeCoding?.length ? `<h4>动手前的问题</h4>${listHtml(guide.questionsBeforeCoding)}` : ""}
+      ${guide.suggestedSteps?.length ? `<h4>建议步骤</h4>${listHtml(guide.suggestedSteps, "ol")}` : ""}
+      ${memoryHtml(payload.learningMemory)}
+    `;
+  }
+
+  // Unknown kind fallback
+  return `<h3>${escapeHtml(kind)}</h3><pre>${escapeHtml(JSON.stringify(payload, null, 2))}</pre>`;
 }
 
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+function appendCard(kind, payload) {
+  const feed = $("cardFeed");
+  const card = document.createElement("article");
+  card.className = `card card-${kind}`;
+  card.dataset.kind = kind;
+  card.innerHTML = buildCardHtml(kind, payload);
+  feed.appendChild(card);
+  card.scrollIntoView({ behavior: "smooth", block: "end" });
+  persistCards();
+}
+
+function persistCards() {
+  if (!vscode) return;
+  const cards = Array.from($("cardFeed").querySelectorAll(".card")).map((el) => ({
+    kind: el.dataset.kind,
+    html: el.innerHTML
+  }));
+  vscode.setState({ cards, repoPath: state.repoPath, task: state.task, hasScan: !!state.scan });
+}
+
+function restoreCards() {
+  if (!vscode) return;
+  const saved = vscode.getState();
+  if (!saved || !saved.cards || !saved.cards.length) return;
+  const feed = $("cardFeed");
+  for (const { kind, html } of saved.cards) {
+    const card = document.createElement("article");
+    card.className = `card card-${kind}`;
+    card.dataset.kind = kind;
+    card.innerHTML = html;
+    feed.appendChild(card);
+  }
+  if (saved.repoPath) {
+    state.repoPath = saved.repoPath;
+    $("repoPath").value = saved.repoPath;
+  }
+  if (saved.task) state.task = saved.task;
+  if (saved.hasScan) $("taskBar").hidden = false;
+  feed.lastElementChild?.scrollIntoView({ block: "end" });
 }
 
 function requireRepo() {
   const repoPath = $("repoPath").value.trim();
-  if (!repoPath) throw new Error("Enter a repository path first.");
+  if (!repoPath) throw new Error("请先输入仓库路径。");
   state.repoPath = repoPath;
   return repoPath;
 }
 
-document.querySelectorAll(".tab").forEach((tab) => {
-  tab.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach((node) => node.classList.remove("active"));
-    document.querySelectorAll(".view").forEach((node) => node.classList.remove("active"));
-    tab.classList.add("active");
-    $(tab.dataset.view).classList.add("active");
-  });
-});
-
 $("scanBtn").addEventListener("click", async () => {
   try {
-    setStatus("Scanning repository", "busy");
-    const scan = await api("/api/scan", { repoPath: requireRepo() });
+    setStatus("正在扫描仓库…", "busy");
+    const repoPath = requireRepo();
+    const scan = await api("/api/scan", { repoPath });
     state.scan = scan;
-    state.lastDiffHash = "";
-    renderRepoMap(scan);
-    setStatus(formatGenerationStatus("Repo map generated", scan.aiSource, scan.aiError));
+    state.repoMap = scan.repoMap || scan.localMap || {};
+    appendCard("scan", scan);
+    syncContext();
+    $("taskBar").hidden = false;
+    setStatus("就绪");
   } catch (error) {
     setError(error);
   }
@@ -254,120 +309,26 @@ $("scanBtn").addEventListener("click", async () => {
 $("navigateBtn").addEventListener("click", async () => {
   try {
     const task = $("taskInput").value.trim();
-    if (!task) throw new Error("Enter a task first.");
-    if (!state.scan) throw new Error("Scan a repository first.");
+    if (!task) throw new Error("请先输入任务。");
+    if (!state.scan) throw new Error("请先扫描仓库。");
     state.task = task;
-    setStatus("Creating task route", "busy");
+    setStatus("正在生成任务路线…", "busy");
     const data = await api("/api/navigate", {
       repoPath: requireRepo(),
       task,
       repoMap: state.repoMap,
       files: state.scan.files
     });
-    renderNavigation(data);
-    setStatus(formatGenerationStatus("Route generated", data.aiSource, data.aiError));
+    appendCard("navigate", data);
+    syncContext();
+    setStatus("就绪");
   } catch (error) {
     setError(error);
   }
 });
 
-$("diffBtn").addEventListener("click", async () => {
-  try {
-    if (!state.scan) throw new Error("Scan a repository first.");
-    setStatus("Analyzing git diff", "busy");
-    const data = await api("/api/diff", {
-      repoPath: requireRepo(),
-      repoMap: state.repoMap
-    });
-    renderDiff(data);
-    setStatus(formatGenerationStatus("Diff analyzed", data.aiSource, data.aiError));
-  } catch (error) {
-    setError(error);
-  }
-});
-
-async function runScheduledDiffCheck() {
-  if (!state.scan) throw new Error("Scan a repository first.");
-  const data = await api("/api/diff/check", {
-    repoPath: requireRepo(),
-    repoMap: state.repoMap,
-    previousDiffHash: state.lastDiffHash
-  });
-  renderWatchResult(data);
-  return data;
+// Restore persisted state, then notify extension the webview is ready
+restoreCards();
+if (vscode) {
+  vscode.postMessage({ command: "ready" });
 }
-
-$("startWatchBtn").addEventListener("click", async () => {
-  try {
-    if (state.watchRunning) return;
-    if (!state.scan) throw new Error("Scan a repository first.");
-
-    const intervalSeconds = Number.parseInt($("watchInterval").value, 10);
-    if (!Number.isFinite(intervalSeconds) || intervalSeconds < 10) {
-      throw new Error("Interval must be at least 10 seconds.");
-    }
-
-    state.watchRunning = true;
-    $("startWatchBtn").disabled = true;
-    $("stopWatchBtn").disabled = false;
-    $("watchInterval").disabled = true;
-    setStatus("Scheduled diff watcher started");
-    $("watchStatus").textContent = "Checking current diff now.";
-
-    await runScheduledDiffCheck();
-    state.watchTimer = window.setInterval(async () => {
-      try {
-        await runScheduledDiffCheck();
-      } catch (error) {
-        setError(error);
-        stopWatch();
-      }
-    }, intervalSeconds * 1000);
-  } catch (error) {
-    setError(error);
-    stopWatch();
-  }
-});
-
-function stopWatch() {
-  if (state.watchTimer) {
-    window.clearInterval(state.watchTimer);
-    state.watchTimer = null;
-  }
-  state.watchRunning = false;
-  $("startWatchBtn").disabled = false;
-  $("stopWatchBtn").disabled = true;
-  $("watchInterval").disabled = false;
-  $("watchStatus").textContent = "Watcher is stopped.";
-}
-
-$("stopWatchBtn").addEventListener("click", () => {
-  stopWatch();
-  setStatus("Scheduled diff watcher stopped");
-});
-
-$("saveLogBtn").addEventListener("click", async () => {
-  try {
-    const summary = state.diff?.coach?.summary || state.navigation?.guide?.taskUnderstanding || "Session saved.";
-    setStatus("Saving session", "busy");
-    await api("/api/sessions", {
-      repoPath: state.repoPath || $("repoPath").value.trim(),
-      task: state.task || $("taskInput").value.trim() || "Explored repository",
-      summary,
-      repoMap: state.repoMap,
-      navigation: state.navigation?.guide,
-      changedFiles: state.diff?.changedFiles || [],
-      learnedConcepts: [
-        ...(state.navigation?.guide?.filesToReadFirst || []),
-        ...(state.diff?.changedFiles || [])
-      ].slice(0, 12),
-      openQuestions: state.diff?.coach?.developerUnderstandingQuestions || state.navigation?.guide?.questionsBeforeCoding || []
-    });
-    await loadSessions();
-    setStatus("Session saved");
-  } catch (error) {
-    setError(error);
-  }
-});
-
-loadSessions().catch(() => {});

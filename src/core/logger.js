@@ -26,7 +26,7 @@ function safeLogValue(value) {
 }
 
 function createLogger({ dataDir, appLogFile }) {
-  let logWriteChain = Promise.resolve();
+  let logWriteChain = fsp.mkdir(dataDir, { recursive: true });
 
   function log(level, event, details = {}) {
     const entry = {
@@ -45,7 +45,6 @@ function createLogger({ dataDir, appLogFile }) {
     }
 
     logWriteChain = logWriteChain
-      .then(() => fsp.mkdir(dataDir, { recursive: true }))
       .then(() => fsp.appendFile(appLogFile, `${line}\n`))
       .catch((error) => console.error(JSON.stringify({
         ts: new Date().toISOString(),

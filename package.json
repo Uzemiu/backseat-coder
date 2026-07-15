@@ -1,8 +1,41 @@
 {
-  "name": "ai-pair-coding-guide",
+  "name": "backseat-coder",
+  "displayName": "Backseat Coder",
   "version": "0.1.0",
-  "private": true,
-  "description": "A local AI pair coding guide that helps humans navigate unfamiliar codebases without taking the keyboard.",
+  "description": "AI pair coding guide that helps humans navigate unfamiliar codebases without taking the keyboard.",
+  "publisher": "backseat-coder",
+  "engines": {
+    "vscode": "^1.85.0",
+    "node": ">=20"
+  },
+  "categories": ["Other"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "backseat-coder.open",
+        "title": "Backseat Coder: Open Sidebar"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "backseatCoder",
+          "title": "Backseat Coder",
+          "icon": "$(comment-discussion)"
+        }
+      ]
+    },
+    "views": {
+      "backseatCoder": [
+        {
+          "type": "webview",
+          "id": "backseatCoder.sidebar",
+          "name": "Backseat Coder"
+        }
+      ]
+    }
+  },
   "scripts": {
     "dev": "node server.js",
     "start": "node server.js",
@@ -11,7 +44,7 @@
   "dependencies": {
     "undici": "^7.16.0"
   },
-  "engines": {
-    "node": ">=20"
+  "devDependencies": {
+    "@types/vscode": "^1.85.0"
   }
 }
