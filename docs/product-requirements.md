@@ -1,5 +1,12 @@
 # AI Pair Coding Guide Product Requirements
 
+> **Status note (added retrospectively).** This is the original MVP requirements doc, written before the product form was settled. It still holds as the spec for the "brain layer" capabilities (Repo Map, Task Navigator, Diff Coach, Learning Log), all of which are implemented and passing tests. Two things have since moved beyond what's written here:
+>
+> - The product now ships as a **VS Code sidebar extension** (listed under §11 Future Work below), not just a local web app. The extension calls the same handlers **in-process** (`require`), so a running `localhost:3000` server is no longer required — the HTTP server remains as a browser/standalone fallback.
+> - A **file/edit watcher with automatic diff coaching** and **AFK presence detection** are implemented in the extension.
+>
+> For the current architecture and product vision, see the Chinese docs in this folder: [产品定义.md](产品定义.md), [实现架构.md](实现架构.md), [设计原则.md](设计原则.md).
+
 ## 1. Product Positioning
 
 AI Pair Coding Guide is a local developer tool for reversing the usual AI coding workflow.
@@ -326,13 +333,15 @@ Chinese version:
 
 Potential extensions after MVP:
 
-- VS Code extension
-- file watcher for near real-time diff coaching
+- ✅ VS Code extension — **done** (sidebar webview, in-process brain layer)
+- ✅ file watcher for near real-time diff coaching — **done** (save/change listeners + polling, hash-deduped)
 - staged diff support with `git diff --cached`
-- untracked file detection
+- untracked file detection — **done** (`git add -N` intent-to-add in `git.js`)
 - richer project knowledge graph
 - per-module familiarity score
 - task history search
 - test command detection and execution
 - AST-aware call graph for supported languages
 - explicit mode switch between Guide, Navigator, Reviewer, and Mentor
+- hesitation sensing (卡住检测) — planned, still open
+- style-profile memory (越用越懂你的命名/结构偏好) — planned, still open

@@ -214,6 +214,9 @@ function buildCardHtml(kind, payload) {
     const coach = payload.coach || {};
     const ts = payload.checkedAt ? new Date(payload.checkedAt).toLocaleTimeString() : "";
     const brief = coach.brief || "";
+    // 详情（影响/风险/测试/反思问题）不在感知阶段生成，点"展开详情"时才按需请求，
+    // 这样卡片能第一时间冒出来。已生成的详情（如手动"看改动"）直接内联渲染。
+    const hasDetails = coach.impact?.length || coach.risks?.length || coach.missingTests?.length || coach.developerUnderstandingQuestions?.length;
     const detailHtml = `
       ${coach.summary ? `<p>${escapeHtml(coach.summary)}</p>` : ""}
       ${payload.changedFiles?.length ? `<h4>改动文件</h4>${listHtml(payload.changedFiles)}` : ""}
@@ -224,13 +227,17 @@ function buildCardHtml(kind, payload) {
       ${memoryHtml(payload.learningMemory)}
       ${payload.diff ? `<details><summary>raw diff</summary><pre>${escapeHtml(payload.diff)}</pre></details>` : ""}
     `;
+    const detailSection = hasDetails
+      ? `<details class="card-details"><summary>详情</summary>${detailHtml}</details>`
+      : `<button class="btn-secondary details-btn">展开详情</button>
+         <div class="details-slot"></div>`;
     return `
       <div class="card-title-row">
         <h3>改动审视${ts ? " · " + escapeHtml(ts) : ""}</h3>
         ${aiSourceBadge(payload.aiSource, payload.aiError)}
       </div>
       ${brief ? `<p class="card-brief">${escapeHtml(brief)}</p>` : ""}
-      <details class="card-details"><summary>详情</summary>${detailHtml}</details>
+      ${detailSection}
     `;
   }
 
@@ -255,9 +262,34 @@ function buildCardHtml(kind, payload) {
     `;
   }
 
+  if (kind === "explain") {
+    const ex = payload.explanation || {};
+    const loc = payload.symbolName
+      ? escapeHtml(payload.symbolName)
+      : (payload.filePath ? escapeHtml(payload.filePath) + (payload.lineNumber ? ":" + payload.lineNumber : "") : "");
+    const detailHtml = `
+      ${ex.role ? `<p><strong>角色：</strong>${escapeHtml(ex.role)}</p>` : ""}
+      ${ex.watchOut ? `<p><strong>留意：</strong>${escapeHtml(ex.watchOut)}</p>` : ""}
+      ${payload.filePath ? `<p class="card-loc">${escapeHtml(payload.filePath)}${payload.lineNumber ? ":" + payload.lineNumber : ""}</p>` : ""}
+    `;
+    const hasDetail = ex.role || ex.watchOut || payload.filePath;
+    return `
+      <div class="card-title-row">
+        <h3>📖 读到这里${loc ? " · " + loc : ""}</h3>
+        ${aiSourceBadge(payload.aiSource, payload.aiError)}
+      </div>
+      ${ex.brief ? `<p class="card-brief">${escapeHtml(ex.brief)}</p>` : ""}
+      ${hasDetail ? `<details class="card-details"><summary>更多</summary>${detailHtml}</details>` : ""}
+    `;
+  }
+
   // Unknown kind fallback
   return `<h3>${escapeHtml(kind)}</h3><pre>${escapeHtml(JSON.stringify(payload, null, 2))}</pre>`;
 }
+
+// diff 卡片的快照（供"展开详情"按需请求时回传当时的 diff，而非此刻磁盘状态）
+const cardSnapshots = new Map();
+let nextCardId = 1;
 
 function appendCard(kind, payload) {
   const feed = $("cardFeed");
@@ -265,9 +297,61 @@ function appendCard(kind, payload) {
   card.className = `card card-${kind}`;
   card.dataset.kind = kind;
   card.innerHTML = buildCardHtml(kind, payload);
+
+  // 为可"展开详情"的 diff 卡片挂上快照与 id，按钮点击时据此按需生成详情
+  const detailsBtn = card.querySelector(".details-btn");
+  if (kind === "diff" && detailsBtn && payload?.diff) {
+    const cardId = String(nextCardId++);
+    card.dataset.cardId = cardId;
+    cardSnapshots.set(cardId, {
+      repoPath: state.repoPath,
+      repoMap: state.repoMap,
+      diff: payload.diff,
+      changedFiles: payload.changedFiles || []
+    });
+  }
+
   feed.appendChild(card);
   card.scrollIntoView({ behavior: "smooth", block: "end" });
   persistCards();
+}
+
+async function loadCardDetails(card) {
+  const cardId = card.dataset.cardId;
+  const snapshot = cardId && cardSnapshots.get(cardId);
+  const slot = card.querySelector(".details-slot");
+  const btn = card.querySelector(".details-btn");
+  if (!slot || !btn) return;
+  if (!snapshot) {
+    slot.innerHTML = `<p>详情快照已失效（可能重载过窗口），请重新编辑以生成新的审视。</p>`;
+    btn.remove();
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = "正在生成详情…";
+  try {
+    const data = await api("/api/diff/details", {
+      repoPath: snapshot.repoPath,
+      repoMap: snapshot.repoMap,
+      diff: snapshot.diff,
+      changedFiles: snapshot.changedFiles
+    });
+    const coach = data.coach || {};
+    slot.innerHTML = `
+      ${coach.impact?.length ? `<h4>影响</h4>${listHtml(coach.impact)}` : ""}
+      ${coach.risks?.length ? `<h4>风险</h4>${listHtml(coach.risks)}` : ""}
+      ${coach.missingTests?.length ? `<h4>缺失测试</h4>${listHtml(coach.missingTests)}` : ""}
+      ${coach.developerUnderstandingQuestions?.length ? `<h4>反思问题</h4>${listHtml(coach.developerUnderstandingQuestions, "ol")}` : ""}
+      ${memoryHtml(data.learningMemory)}
+      <details><summary>raw diff</summary><pre>${escapeHtml(snapshot.diff)}</pre></details>
+    `;
+    btn.remove();
+    persistCards();
+  } catch (error) {
+    btn.disabled = false;
+    btn.textContent = "展开详情";
+    slot.innerHTML = `<p>生成详情失败：${escapeHtml(error.message || String(error))}</p>`;
+  }
 }
 
 function persistCards() {
@@ -385,6 +469,14 @@ $("navigateBtn").addEventListener("click", async () => {
   } catch (error) {
     setError(error);
   }
+});
+
+// 事件委托：点击 diff 卡片的"展开详情"按钮 → 按需生成详情
+$("cardFeed").addEventListener("click", (event) => {
+  const btn = event.target.closest(".details-btn");
+  if (!btn) return;
+  const card = btn.closest(".card");
+  if (card) loadCardDetails(card);
 });
 
 // Restore persisted state, then notify extension the webview is ready

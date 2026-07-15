@@ -149,19 +149,48 @@ function createAiService({ config, log }) {
     );
   }
 
-  function aiDiffCoach(diffInfo, repoMap, learningMemory = []) {
-    const fallback = localDiffCoach(diffInfo);
+  // 轻量首响：只判断值不值得说 + 一句 brief + 一句 summary。输出极小，返回快，
+  // 用于感知阶段第一时间把卡片冒出来。重的分析留给 aiDiffDetails 按需生成。
+  function aiDiffBrief(diffInfo, repoMap, learningMemory = []) {
+    const fallback = localDiffBrief(diffInfo);
     const projectGuide = repoMap.projectGuide || buildProjectGuide(repoMap, [], {});
     const memoryContext = formatLearningMemory(learningMemory);
     return callAiJson(
-      "You are the developer's trusted senior colleague — the one they turn to when they want an honest opinion, not a rubber stamp. You've seen this codebase grow, you remember past mistakes, and you actually care whether this change lands well. You talk like a real person: casual, direct, occasionally opinionated. You notice things. You ask the question the developer probably already has in the back of their head but hasn't said out loud yet. You're not trying to be comprehensive — you're trying to be useful right now. Always respond in Chinese. Return only JSON.",
-      `Project context:\n${projectGuide.slice(0, 16000)}\n\nWhat you remember from past sessions:\n${memoryContext}\n\nChanged files: ${JSON.stringify(diffInfo.changedFiles)}\n\nDiff:\n${diffInfo.diff}\n\nRespond as that colleague would — brief, honest, human. Return JSON:\n- brief: 2-3 sentences in Chinese with your gut reaction to this change — the one thing you'd say if you had 10 seconds. Shown first before the developer expands for full details.\n- summary: 1-2 sentences, say what actually changed and whether it feels right\n- impact: up to 3 short notes on what this touches or changes for users/callers\n- risks: up to 3 things that could bite them — only real concerns, skip the obvious\n- missingTests: up to 3 specific gaps, or empty array if coverage looks fine\n- followUpFiles: files worth a second look given this change\n- developerUnderstandingQuestions: 1-3 questions the developer should sit with — the kind a good colleague asks over coffee, not a quiz\nAll text fields must be in Chinese.`,
+      "You are the developer's trusted senior colleague — the one they turn to when they want an honest opinion, not a rubber stamp. You've seen this codebase grow and you actually care whether this change lands well. You talk like a real person: casual, direct, occasionally opinionated. You're reacting fast to a change in progress. Always respond in Chinese. Return only JSON.",
+      `Project context:\n${projectGuide.slice(0, 8000)}\n\nWhat you remember from past sessions:\n${memoryContext}\n\nChanged files: ${JSON.stringify(diffInfo.changedFiles)}\n\nDiff:\n${diffInfo.diff}\n\nReact fast, like a colleague glancing over your shoulder. Return JSON with ONLY these fields:\n- worthMentioning: boolean. This diff may be work-in-progress that isn't even saved yet. You're a colleague with 分寸 — but one who's actually engaged, not silent unless the building is on fire. Set true whenever you have anything genuinely useful to offer: a bug or risk, a missing test, but ALSO a naming/structure/readability suggestion, a nudge toward an existing helper or project convention, or one good question worth sitting with. Set false ONLY when the change is truly empty of substance — pure placeholder text, whitespace/formatting, a rename with nothing to remark on, or a fragment too half-written to react to yet.\n- brief: 2-3 sentences in Chinese with your gut reaction — the one thing you'd say if you had 10 seconds.\n- summary: 1-2 sentences, say what actually changed and whether it feels right.\nAll text fields must be in Chinese.`,
+      fallback
+    );
+  }
+
+  // 详情：影响 / 风险 / 缺失测试 / 后续文件 / 反思问题。较重，仅在开发者点开"详情"时调用。
+  function aiDiffDetails(diffInfo, repoMap, learningMemory = []) {
+    const fallback = localDiffDetails(diffInfo);
+    const projectGuide = repoMap.projectGuide || buildProjectGuide(repoMap, [], {});
+    const memoryContext = formatLearningMemory(learningMemory);
+    return callAiJson(
+      "You are the developer's trusted senior colleague giving an honest, human read on a change. Casual, direct, occasionally opinionated. Not trying to be comprehensive — trying to be useful. You ask the question the developer already has in the back of their head. Always respond in Chinese. Return only JSON.",
+      `Project context:\n${projectGuide.slice(0, 16000)}\n\nWhat you remember from past sessions:\n${memoryContext}\n\nChanged files: ${JSON.stringify(diffInfo.changedFiles)}\n\nDiff:\n${diffInfo.diff}\n\nGive the fuller read a colleague would offer when asked. Return JSON:\n- impact: up to 3 short notes on what this touches or changes for users/callers\n- risks: up to 3 things that could bite them — only real concerns, skip the obvious\n- missingTests: up to 3 specific gaps, or empty array if coverage looks fine\n- followUpFiles: files worth a second look given this change\n- developerUnderstandingQuestions: 1-3 questions the developer should sit with — the kind a good colleague asks over coffee, not a quiz\nAll text fields must be in Chinese.`,
+      fallback
+    );
+  }
+
+  // 阅读陪伴：光标停在某段代码上时，讲解它在做什么、在项目里扮演什么角色。
+  // 是"陪你读"，不是"陪你改" —— 只解释，不建议改动（原则一 引导而非代劳）。
+  function aiExplainCode({ filePath, code, symbolName }, repoMap, learningMemory = []) {
+    const fallback = localExplainCode({ filePath, symbolName });
+    const projectGuide = repoMap.projectGuide || buildProjectGuide(repoMap, [], {});
+    const memoryContext = formatLearningMemory(learningMemory);
+    return callAiJson(
+      "You are a senior colleague reading code side by side with the developer, helping them understand what they're looking at so they can read more fluently. You explain — you do NOT suggest changes, review, or critique. Think of it as narrating the code's intent and role. Casual, clear, concise. Always respond in Chinese. Return only JSON.",
+      `Project context:\n${projectGuide.slice(0, 8000)}\n\nWhat you remember from past sessions:\n${memoryContext}\n\nThe developer's cursor is resting on this code in ${filePath}${symbolName ? ` (around \`${symbolName}\`)` : ""}:\n\n${code}\n\nHelp them read it. Return JSON with ONLY these fields:\n- brief: 1-2 sentences in Chinese — what this code does, in plain language. The one thing that makes it click.\n- role: 1 sentence in Chinese — what part it plays in the larger flow / who calls it or what it feeds into (best-effort from context).\n- watchOut: optional, 1 short note in Chinese on a subtlety worth noticing while reading (edge case, non-obvious dependency), or empty string if nothing stands out. This is a reading aid, NOT a review — do not suggest changes.\nAll text fields must be in Chinese. Keep it short — this is a glance, not a lecture.`,
       fallback
     );
   }
 
   return {
-    aiDiffCoach,
+    aiDiffBrief,
+    aiDiffDetails,
+    aiExplainCode,
     aiNavigator,
     aiRepoMap,
     callAiJson,
@@ -225,24 +254,27 @@ function localNavigator(task, repoMap, searchResults) {
   };
 }
 
-function localDiffCoach(diffInfo) {
+function localDiffBrief(diffInfo) {
   if (!diffInfo.diff.trim()) {
     return {
+      worthMentioning: false,
       brief: "没有找到未暂存的改动。",
-      summary: "没有找到未暂存的代码差异。",
-      impact: [],
-      risks: ["可能存在已暂存的改动，普通 git diff 不会显示。"],
-      missingTests: [],
-      followUpFiles: [],
-      developerUnderstandingQuestions: ["你的改动已经暂存了，还是工作区本来就是干净的？"]
+      summary: "没有找到未暂存的代码差异。"
     };
   }
   const added = diffInfo.diff.split(/\r?\n/).filter((line) => line.startsWith("+") && !line.startsWith("+++")).length;
   const removed = diffInfo.diff.split(/\r?\n/).filter((line) => line.startsWith("-") && !line.startsWith("---")).length;
+  return {
+    // 本地启发式没有"值不值得说"的判断力，有差异就照现状汇报，不做退化
+    worthMentioning: true,
+    brief: `本次改动涉及 ${diffInfo.changedFiles.length} 个文件，约新增 ${added} 行、删除 ${removed} 行。`,
+    summary: `当前差异涉及 ${diffInfo.changedFiles.length} 个文件，约新增 ${added} 行、删除 ${removed} 行。`
+  };
+}
+
+function localDiffDetails(diffInfo) {
   const testFiles = diffInfo.changedFiles.filter((file) => /(\.test\.|\.spec\.|_test\.|\/test\/|\/tests\/|__tests__)/i.test(file));
   return {
-    brief: `本次改动涉及 ${diffInfo.changedFiles.length} 个文件，约新增 ${added} 行、删除 ${removed} 行。`,
-    summary: `当前差异涉及 ${diffInfo.changedFiles.length} 个文件，约新增 ${added} 行、删除 ${removed} 行。`,
     impact: diffInfo.changedFiles.map((file) => `修改了 ${file}，请确认依赖它的调用方和测试。`),
     risks: [
       "确认配置、文档或示例是否需要同步更新。",
@@ -258,10 +290,21 @@ function localDiffCoach(diffInfo) {
   };
 }
 
+function localExplainCode({ filePath, symbolName }) {
+  const where = symbolName ? `\`${symbolName}\`` : "这段代码";
+  return {
+    brief: `${where} 位于 ${filePath || "当前文件"}。没有配置 AI 时无法生成讲解，先自己顺一遍它的输入、输出和调用关系。`,
+    role: "（本地模式下无法推断在整体流程中的角色）",
+    watchOut: ""
+  };
+}
+
 module.exports = {
   createAiService,
   formatLearningMemory,
-  localDiffCoach,
+  localDiffBrief,
+  localDiffDetails,
+  localExplainCode,
   localNavigator,
   parseJsonOutput
 };
